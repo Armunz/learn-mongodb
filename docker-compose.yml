@@ -11,46 +11,40 @@ services:
     container_name: container-go-learn-mongodb
     # environment yang akan digunakan pada aplikasi
     environment:
-      - APP_MONGO_URI="mongodb://root:password@mongodb:27017"
-      - APP_MONGO_DATABASE_NAME="sample_analytics"
-      - APP_MONGO_POOL_MIN="10"
-      - APP_MONGO_POOL_MAX="100"
-      - APP_MONGO_MAX_IDLE_TIME_SECOND="10"
-      - APP_MONGO_INIT_CONNECTION_TIME_SECOND="10"
-      - APP_MONGO_QUERY_TIMEOUT_MS="2000"
+      - APP_MONGO_URI=mongodb://root:password@mongodb:27017
+      - APP_MONGO_DATABASE_NAME=sample_analytics
+      - APP_MONGO_POOL_MIN=10
+      - APP_MONGO_POOL_MAX=100
+      - APP_MONGO_MAX_IDLE_TIME_SECOND=10
+      - APP_MONGO_INIT_CONNECTION_TIME_SECOND=10
+      - APP_MONGO_QUERY_TIMEOUT_MS=2000
       - API_TIMEOUT=5
       - DEFAULT_LIMIT=20
     ports:
       - 9999:9999
     restart: always
     depends_on:
-      mongodb:
+      mongodb_db:
         condition: service_healthy
-  mongodb:
+  mongodb_db:
     image: mongo:latest
     restart: always
     environment:
       - MONGO_INITDB_ROOT_USERNAME=root
       - MONGO_INITDB_ROOT_PASSWORD=password
-      - DB_NAME=sample_analytics
-      - DB_PORT=27017
+      - MONGO_INITDB_DATABASE=sample_analytics
     ports:
       - 27017:27017
     expose:
       - 27017
     volumes:
       - mongodb-volume:/data/db
-      - ./internal/db/init.sh:/docker-entrypoint-initdb.d/init.sh # mount init script mongodb ke docker entrypoint saat start up
-      - ./internal/db/accounts.json:/docker-entrypoint-initdb.d/accounts.json # mount accounts.json ke docker entrypoint
+      - mongoconfig:/data/configdb
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:${DB_PORT}/?authSource=${DB_NAME} --quiet
+      test: echo 'db.runCommand("ping").ok'
       interval: 30s
       timeout: 10s
       retries: 5
-  # # mongo-seeder untuk seed data pada saat startup
-  # mongo-seeder:
-  #   image: mongo:latest
-  #   links:
-  #     - mongodb:mongodb  # Link to mongodb service
 volumes:
   mongodb-volume:
+  mongoconfig:

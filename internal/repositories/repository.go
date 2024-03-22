@@ -69,24 +69,36 @@ func (r *repoImpl) List(ctx context.Context, product string, orderBy int, limit 
 	defer cancel()
 
 	// build pipeline
-	pipeline := mongo.Pipeline{}
+	var metadataStage bson.A
+	var dataStage bson.A
 
 	// match stage
 	if product != "" {
-		pipeline = append(pipeline, bson.D{primitive.E{Key: "$match", Value: bson.D{primitive.E{Key: "products", Value: product}}}})
+		dataStage = append(dataStage, bson.D{primitive.E{Key: "$match", Value: bson.D{primitive.E{Key: "products", Value: product}}}})
+		metadataStage = append(metadataStage, bson.D{primitive.E{Key: "$match", Value: bson.D{primitive.E{Key: "products", Value: product}}}})
 	}
-
-	// count stage
-	pipeline = append(pipeline, bson.D{primitive.E{Key: "$count", Value: "total_count"}})
 
 	// sort stage
 	if orderBy != 0 {
-		pipeline = append(pipeline, bson.D{primitive.E{Key: "account_id", Value: orderBy}})
+		dataStage = append(dataStage, bson.D{primitive.E{Key: "$sort", Value: bson.D{primitive.E{Key: "account_id", Value: orderBy}}}})
 	}
 
 	// pagination stage
-	pipeline = append(pipeline, bson.D{primitive.E{Key: "$skip", Value: offset}})
-	pipeline = append(pipeline, bson.D{primitive.E{Key: "$limit", Value: limit}})
+	dataStage = append(dataStage, bson.D{primitive.E{Key: "$skip", Value: offset}})
+	dataStage = append(dataStage, bson.D{primitive.E{Key: "$limit", Value: limit}})
+
+	// count stage
+	metadataStage = append(metadataStage, bson.D{primitive.E{Key: "$count", Value: "total_count"}})
+
+	// facet stage
+	facet := bson.M{
+		"metadata": metadataStage,
+		"data":     dataStage,
+	}
+
+	pipeline := mongo.Pipeline{
+		{primitive.E{Key: "$facet", Value: facet}},
+	}
 
 	cursor, err := r.collection.Aggregate(ctx, pipeline)
 	if err != nil {
@@ -102,20 +114,33 @@ func (r *repoImpl) List(ctx context.Context, product string, orderBy int, limit 
 	var totalCount int64
 	var accounts []entity.Account
 	if len(results) > 0 {
-		// Extract total count from the first document
-		metadata := results[0]
-		totalCount = metadata["total_count"].(int64)
+		metadata, ok := results[0]["metadata"].(bson.A)[0].(bson.M)
+		if !ok {
+			return nil, 0, errMetaDataTypeAssertion
+		}
 
-		// Extract and parse account data documents
-		for _, doc := range results[1:] { // Skip the first doc (metadata)
-			var account entity.Account
-			account.AccountID = doc["account_id"].(int)
-			account.Limit = doc["limit"].(int)
-			products, ok := doc["products"].(bson.A)
-			if ok {
-				for _, p := range products {
-					account.Products = append(account.Products, p.(string))
-				}
+		data, ok := results[0]["data"].(bson.A)
+		if !ok {
+			return nil, 0, errDataTypeAssertion
+		}
+
+		totalCount = int64(metadata["total_count"].(int32))
+		for _, d := range data {
+			ac, ok := d.(bson.M)
+			if !ok {
+				return nil, 0, errAccountsTypeAssertion
+			}
+
+			acProducts := ac["products"].(bson.A)
+			products := make([]string, 0, len(acProducts))
+			for _, p := range acProducts {
+				products = append(products, p.(string))
+			}
+
+			account := entity.Account{
+				AccountID: int(ac["account_id"].(int32)),
+				Limit:     int(ac["limit"].(int32)),
+				Products:  products,
 			}
 
 			accounts = append(accounts, account)
